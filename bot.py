@@ -1,32 +1,20 @@
-import logging
 import os
-import re
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import requests
 
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s %(levelname)s %(message)s",
-)
-logger = logging.getLogger("polymarket_spike_bot")
-
 GAMMA_API = os.getenv("POLYMARKET_GAMMA_API", "https://gamma-api.polymarket.com")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 POLL_SECONDS = int(os.getenv("POLL_SECONDS", "45"))
 MARKET_LIMIT = int(os.getenv("MARKET_LIMIT", "200"))
-DEFAULT_SPIKE_THRESHOLD = float(os.getenv("DEFAULT_SPIKE_THRESHOLD", "0.10"))
+SPIKE_THRESHOLD = float(os.getenv("SPIKE_THRESHOLD", "0.10"))
 MIN_NOTIONAL_24H = float(os.getenv("MIN_NOTIONAL_24H", "10000"))
-MIN_ABSOLUTE_MOVE = float(os.getenv("MIN_ABSOLUTE_MOVE", "0.05"))
 EXCLUDED_CATEGORIES = {
-    x.strip().lower()
-    for x in os.getenv("EXCLUDED_CATEGORIES", "crypto,sports,esports").split(",")
-    if x.strip()
+    x.strip().lower() for x in os.getenv("EXCLUDED_CATEGORIES", "crypto,sports,esports").split(",") if x.strip()
 }
-STARTUP_TEST_MESSAGE = os.getenv("STARTUP_TEST_MESSAGE", "true").lower() == "true"
 
 SPORTS_KEYWORDS = {
     "nba",
@@ -54,9 +42,6 @@ SPORTS_KEYWORDS = {
     "cs2",
     "league of legends",
     "dota",
-    "win",
-    "vs",
-    "post",
 }
 
 CRYPTO_KEYWORDS = {
@@ -94,17 +79,6 @@ class PolymarketSpikeBot:
 
         self.session = requests.Session()
         self.prev_prices: Dict[str, float] = {}
-
-    def verify_telegram_config(self) -> None:
-        """Fail fast if bot token/chat id are invalid."""
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe"
-        response = self.session.get(url, timeout=20)
-        response.raise_for_status()
-        data = response.json()
-        if not data.get("ok"):
-            raise ValueError(f"Telegram getMe failed: {data}")
-        username = data.get("result", {}).get("username", "<unknown>")
-        logger.info("Telegram token valid for bot @%s", username)
 
     def fetch_markets(self) -> List[MarketSnapshot]:
         """Fetch active markets and map response fields defensively."""
@@ -147,17 +121,7 @@ class PolymarketSpikeBot:
                 )
             )
 
-        logger.info("Fetched %s included markets", len(markets))
         return markets
-
-
-    @staticmethod
-    def _contains_any_keyword(text: str, keywords: set[str]) -> bool:
-        for keyword in keywords:
-            pattern = rf"\b{re.escape(keyword)}\b"
-            if re.search(pattern, text):
-                return True
-        return False
 
     def _should_include_market(self, item: dict) -> bool:
         """Exclude sports/crypto markets using category metadata + keyword fallback."""
@@ -181,31 +145,14 @@ class PolymarketSpikeBot:
             return False
 
         question = str(item.get("question", "")).lower()
-        if "sports" in EXCLUDED_CATEGORIES and self._contains_any_keyword(question, SPORTS_KEYWORDS):
+        if "sports" in EXCLUDED_CATEGORIES and any(k in question for k in SPORTS_KEYWORDS):
             return False
-        if "esports" in EXCLUDED_CATEGORIES and self._contains_any_keyword(question, SPORTS_KEYWORDS):
+        if "esports" in EXCLUDED_CATEGORIES and any(k in question for k in SPORTS_KEYWORDS):
             return False
-        if "crypto" in EXCLUDED_CATEGORIES and self._contains_any_keyword(question, CRYPTO_KEYWORDS):
+        if "crypto" in EXCLUDED_CATEGORIES and any(k in question for k in CRYPTO_KEYWORDS):
             return False
 
         return True
-
-    @staticmethod
-    def _dynamic_spike_threshold(price: float) -> float:
-        """Return percentage threshold based on current price buckets."""
-        if price < 0.02:
-            return 4.0
-        if price < 0.05:
-            return 3.0
-        if price < 0.10:
-            return 2.0
-        if price < 0.20:
-            return 1.0
-        if price < 0.40:
-            return 0.5
-        if price < 0.60:
-            return 0.25
-        return DEFAULT_SPIKE_THRESHOLD
 
     def detect_spikes(self, markets: List[MarketSnapshot]) -> List[str]:
         alerts: List[str] = []
@@ -220,12 +167,7 @@ class PolymarketSpikeBot:
             delta = current - previous
             delta_pct = delta / previous
 
-            dynamic_threshold = self._dynamic_spike_threshold(previous)
-
-            if abs(delta_pct) < dynamic_threshold:
-                continue
-
-            if abs(delta) < MIN_ABSOLUTE_MOVE:
+            if abs(delta_pct) < SPIKE_THRESHOLD:
                 continue
 
             if market.volume_24h < MIN_NOTIONAL_24H:
@@ -235,15 +177,13 @@ class PolymarketSpikeBot:
             msg = (
                 f"{direction}\n"
                 f"Market: {market.question}\n"
-                f"Price: {previous:.3f} → {current:.3f} ({delta_pct:+.2%}, Δ={delta:+.3f})\n"
-                f"Threshold used: {dynamic_threshold:.0%}\n"
+                f"Price: {previous:.3f} → {current:.3f} ({delta_pct:+.2%})\n"
                 f"24h Δ: {market.one_day_price_change:+.2%}\n"
                 f"24h volume: ${market.volume_24h:,.0f}\n"
                 f"https://polymarket.com/event/{market.slug}"
             )
             alerts.append(msg)
 
-        logger.info("Detected %s spike alerts this cycle", len(alerts))
         return alerts
 
     def send_telegram(self, text: str) -> None:
@@ -266,14 +206,11 @@ class PolymarketSpikeBot:
             return None
 
     def run(self) -> None:
-        self.verify_telegram_config()
-
         excluded = ", ".join(sorted(EXCLUDED_CATEGORIES)) if EXCLUDED_CATEGORIES else "none"
-        if STARTUP_TEST_MESSAGE:
-            self.send_telegram(
-                "✅ Polymarket spike bot started. "
-                f"Dynamic threshold enabled (default>{0.60:.2f}=${DEFAULT_SPIKE_THRESHOLD:.0%}), minMove={MIN_ABSOLUTE_MOVE:.3f}, min24h=${MIN_NOTIONAL_24H:,.0f}, excluded={excluded}"
-            )
+        self.send_telegram(
+            "✅ Polymarket spike bot started. "
+            f"Threshold={SPIKE_THRESHOLD:.0%}, min24h=${MIN_NOTIONAL_24H:,.0f}, excluded={excluded}"
+        )
 
         while True:
             try:
@@ -282,11 +219,7 @@ class PolymarketSpikeBot:
                 for alert in alerts:
                     self.send_telegram(alert)
             except Exception as exc:  # noqa: BLE001
-                logger.exception("Bot loop failure")
-                try:
-                    self.send_telegram(f"⚠️ Bot error: {exc}")
-                except Exception:  # noqa: BLE001
-                    logger.exception("Failed to send Telegram error message")
+                self.send_telegram(f"⚠️ Bot error: {exc}")
 
             time.sleep(POLL_SECONDS)
 
