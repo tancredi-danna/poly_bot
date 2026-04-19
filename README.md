@@ -32,7 +32,6 @@ export MIN_NOTIONAL_24H="10000"
 export POLL_SECONDS="45"
 export MARKET_LIMIT="200"
 export EXCLUDED_CATEGORIES="crypto,sports,esports"
-export STARTUP_TEST_MESSAGE="true"
 ```
 
 5. Run:
@@ -66,7 +65,7 @@ python bot.py
 5. Set environment variables in Render dashboard:
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
-- optional: `SPIKE_THRESHOLD`, `MIN_NOTIONAL_24H`, `POLL_SECONDS`, `MARKET_LIMIT`, `EXCLUDED_CATEGORIES`, `STARTUP_TEST_MESSAGE`
+- optional: `SPIKE_THRESHOLD`, `MIN_NOTIONAL_24H`, `POLL_SECONDS`, `MARKET_LIMIT`, `EXCLUDED_CATEGORIES`
 
 6. Deploy. You should receive the startup message in Telegram.
 
@@ -99,7 +98,6 @@ Environment=MIN_NOTIONAL_24H=10000
 Environment=POLL_SECONDS=45
 Environment=MARKET_LIMIT=200
 Environment=EXCLUDED_CATEGORIES=crypto,sports,esports
-Environment=STARTUP_TEST_MESSAGE=true
 ExecStart=/home/ubuntu/poly_bot/.venv/bin/python /home/ubuntu/poly_bot/bot.py
 Restart=always
 RestartSec=5
@@ -129,24 +127,3 @@ sudo systemctl status poly-bot
 - Market discovery uses Polymarket Gamma API (`https://gamma-api.polymarket.com/markets`).
 - The bot keeps a local in-memory baseline. Restarting the process resets previous prices.
 - For production reliability, use a process manager (Render worker, systemd, Docker, or supervisord).
-
-
-## Troubleshooting (Render deployed but no messages)
-
-1. Check Render logs for these lines:
-   - `Telegram token valid for bot @...`
-   - `Fetched N included markets`
-   - `Detected N spike alerts this cycle`
-2. If startup message is missing, verify:
-   - `TELEGRAM_BOT_TOKEN` is correct
-   - `TELEGRAM_CHAT_ID` is correct
-   - you opened your bot chat and pressed **Start**
-3. For easier testing, temporarily reduce thresholds:
-
-```bash
-SPIKE_THRESHOLD=0.03
-MIN_NOTIONAL_24H=1000
-POLL_SECONDS=30
-```
-
-4. Keep `STARTUP_TEST_MESSAGE=true` so each deploy confirms Telegram delivery.

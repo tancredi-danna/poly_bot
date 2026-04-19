@@ -1,16 +1,9 @@
-import logging
 import os
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import requests
-
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s %(levelname)s %(message)s",
-)
-logger = logging.getLogger("polymarket_spike_bot")
 
 GAMMA_API = os.getenv("POLYMARKET_GAMMA_API", "https://gamma-api.polymarket.com")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -20,11 +13,8 @@ MARKET_LIMIT = int(os.getenv("MARKET_LIMIT", "200"))
 SPIKE_THRESHOLD = float(os.getenv("SPIKE_THRESHOLD", "0.10"))
 MIN_NOTIONAL_24H = float(os.getenv("MIN_NOTIONAL_24H", "10000"))
 EXCLUDED_CATEGORIES = {
-    x.strip().lower()
-    for x in os.getenv("EXCLUDED_CATEGORIES", "crypto,sports,esports").split(",")
-    if x.strip()
+    x.strip().lower() for x in os.getenv("EXCLUDED_CATEGORIES", "crypto,sports,esports").split(",") if x.strip()
 }
-STARTUP_TEST_MESSAGE = os.getenv("STARTUP_TEST_MESSAGE", "true").lower() == "true"
 
 SPORTS_KEYWORDS = {
     "nba",
@@ -90,17 +80,6 @@ class PolymarketSpikeBot:
         self.session = requests.Session()
         self.prev_prices: Dict[str, float] = {}
 
-    def verify_telegram_config(self) -> None:
-        """Fail fast if bot token/chat id are invalid."""
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe"
-        response = self.session.get(url, timeout=20)
-        response.raise_for_status()
-        data = response.json()
-        if not data.get("ok"):
-            raise ValueError(f"Telegram getMe failed: {data}")
-        username = data.get("result", {}).get("username", "<unknown>")
-        logger.info("Telegram token valid for bot @%s", username)
-
     def fetch_markets(self) -> List[MarketSnapshot]:
         """Fetch active markets and map response fields defensively."""
         url = f"{GAMMA_API}/markets"
@@ -142,7 +121,6 @@ class PolymarketSpikeBot:
                 )
             )
 
-        logger.info("Fetched %s included markets", len(markets))
         return markets
 
     def _should_include_market(self, item: dict) -> bool:
@@ -206,7 +184,6 @@ class PolymarketSpikeBot:
             )
             alerts.append(msg)
 
-        logger.info("Detected %s spike alerts this cycle", len(alerts))
         return alerts
 
     def send_telegram(self, text: str) -> None:
@@ -229,14 +206,11 @@ class PolymarketSpikeBot:
             return None
 
     def run(self) -> None:
-        self.verify_telegram_config()
-
         excluded = ", ".join(sorted(EXCLUDED_CATEGORIES)) if EXCLUDED_CATEGORIES else "none"
-        if STARTUP_TEST_MESSAGE:
-            self.send_telegram(
-                "✅ Polymarket spike bot started. "
-                f"Threshold={SPIKE_THRESHOLD:.0%}, min24h=${MIN_NOTIONAL_24H:,.0f}, excluded={excluded}"
-            )
+        self.send_telegram(
+            "✅ Polymarket spike bot started. "
+            f"Threshold={SPIKE_THRESHOLD:.0%}, min24h=${MIN_NOTIONAL_24H:,.0f}, excluded={excluded}"
+        )
 
         while True:
             try:
@@ -245,11 +219,7 @@ class PolymarketSpikeBot:
                 for alert in alerts:
                     self.send_telegram(alert)
             except Exception as exc:  # noqa: BLE001
-                logger.exception("Bot loop failure")
-                try:
-                    self.send_telegram(f"⚠️ Bot error: {exc}")
-                except Exception:  # noqa: BLE001
-                    logger.exception("Failed to send Telegram error message")
+                self.send_telegram(f"⚠️ Bot error: {exc}")
 
             time.sleep(POLL_SECONDS)
 
