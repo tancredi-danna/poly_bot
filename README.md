@@ -1,0 +1,129 @@
+# Polymarket Spike Telegram Bot
+
+Small Python bot that polls active Polymarket markets and sends Telegram notifications when a market price spikes.
+
+## What counts as a spike?
+
+A spike alert is sent when all conditions pass:
+- absolute price move since last poll >= `SPIKE_THRESHOLD` (default `0.10` = 10%)
+- market 24h volume >= `MIN_NOTIONAL_24H` (default `$10,000`)
+- market is not in excluded categories (`EXCLUDED_CATEGORIES`, default `crypto,sports,esports`)
+
+## 1) Local setup
+
+1. Create a Telegram bot with [@BotFather](https://t.me/BotFather), copy token.
+2. Get your Telegram chat ID (DM your bot, then inspect `getUpdates` response).
+3. Create and activate a venv:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+4. Export environment variables:
+
+```bash
+export TELEGRAM_BOT_TOKEN="<your_token>"
+export TELEGRAM_CHAT_ID="<your_chat_id>"
+# optional tuning:
+export SPIKE_THRESHOLD="0.10"
+export MIN_NOTIONAL_24H="10000"
+export POLL_SECONDS="45"
+export MARKET_LIMIT="200"
+export EXCLUDED_CATEGORIES="crypto,sports,esports"
+```
+
+5. Run:
+
+```bash
+python bot.py
+```
+
+## 2) Deploy so it works on your phone
+
+Your phone does **not** run this script directly. Instead:
+- deploy the bot to a cloud host that runs 24/7
+- receive alerts in the Telegram app on your phone
+
+### Option A (recommended): Render background worker
+
+1. Push this repo to GitHub.
+2. In Render, create a **Background Worker** from your repo.
+3. Build command:
+
+```bash
+pip install -r requirements.txt
+```
+
+4. Start command:
+
+```bash
+python bot.py
+```
+
+5. Set environment variables in Render dashboard:
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+- optional: `SPIKE_THRESHOLD`, `MIN_NOTIONAL_24H`, `POLL_SECONDS`, `MARKET_LIMIT`, `EXCLUDED_CATEGORIES`
+
+6. Deploy. You should receive the startup message in Telegram.
+
+### Option B: VPS (DigitalOcean/Lightsail/Hetzner) + systemd
+
+On your server:
+
+```bash
+git clone <your-repo-url>
+cd poly_bot
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Create `/etc/systemd/system/poly-bot.service`:
+
+```ini
+[Unit]
+Description=Polymarket Spike Bot
+After=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/poly_bot
+Environment=TELEGRAM_BOT_TOKEN=YOUR_TOKEN
+Environment=TELEGRAM_CHAT_ID=YOUR_CHAT_ID
+Environment=SPIKE_THRESHOLD=0.10
+Environment=MIN_NOTIONAL_24H=10000
+Environment=POLL_SECONDS=45
+Environment=MARKET_LIMIT=200
+Environment=EXCLUDED_CATEGORIES=crypto,sports,esports
+ExecStart=/home/ubuntu/poly_bot/.venv/bin/python /home/ubuntu/poly_bot/bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then run:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now poly-bot
+sudo systemctl status poly-bot
+```
+
+## 3) Using it from your phone
+
+1. Install Telegram on your iPhone/Android.
+2. Open chat with your bot (the one created via BotFather).
+3. Press **Start** and send any message (for some privacy settings this helps establish chat).
+4. Keep your cloud worker/server running.
+5. Alerts arrive as Telegram push notifications.
+
+## Notes
+
+- Market discovery uses Polymarket Gamma API (`https://gamma-api.polymarket.com/markets`).
+- The bot keeps a local in-memory baseline. Restarting the process resets previous prices.
+- For production reliability, use a process manager (Render worker, systemd, Docker, or supervisord).
